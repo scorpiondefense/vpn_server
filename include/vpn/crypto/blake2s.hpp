@@ -82,7 +82,7 @@ public:
 
 private:
     struct State;
-    std::array<uint8_t, 128> state_buffer_;  // Enough for crypto_generichash_state
+    alignas(std::max_align_t) std::array<uint8_t, 384> state_buffer_;  // Properly aligned for crypto_generichash_blake2b_state
 };
 
 // Construction identifier for WireGuard Noise protocol
