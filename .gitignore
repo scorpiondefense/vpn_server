@@ -1,0 +1,80 @@
+# Build artifacts
+build/
+cmake-build-*/
+out/
+*.o
+*.a
+*.so
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
+CTestTestfile.cmake
+Testing/
+
+# Executables
+vpn_server
+wg-keygen
+vpn_tests
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.cproject
+.settings/
+*.sublime-*
+
+# Keys and secrets (NEVER commit these)
+*.key
+*.pem
+*.pub
+!deploy/*.pub.example
+
+# Configuration with secrets
+config/
+*.conf
+!deploy/sample-*.conf
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Coverage
+coverage/
+*.gcov
+*.gcda
+*.gcno
+
+# Dependencies (fetched by CMake)
+_deps/

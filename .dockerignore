@@ -1,0 +1,38 @@
+# Build artifacts
+build/
+cmake-build-*/
+*.o
+*.a
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Config (mounted as volume)
+config/
+*.conf
+
+# Keys (never include in image)
+*.key
+*.pub
+
+# Documentation
+*.md
+!README.md
+
+# Docker
+docker-compose*.yml
+.dockerignore
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db

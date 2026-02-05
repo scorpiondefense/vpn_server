@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  vpn-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wireguard-vpn
+    restart: unless-stopped
+
+    # Required for TUN device and network configuration
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
+      - net.ipv4.conf.all.src_valid_mark=1
+
+    # Network mode host for best performance and direct UDP access
+    # Alternatively, use port mapping (see below)
+    network_mode: host
+
+    environment:
+      # Replace XXX.XXX.XXX.XXX with your server's public IPv4 address
+      - VPN_PUBLIC_IP=${VPN_PUBLIC_IP:-XXX.XXX.XXX.XXX}
+      - VPN_CONFIG=/etc/wireguard/server.conf
+      - VPN_INTERFACE=wg0
+      # VPN subnets for NAT (match your server.conf Address)
+      - VPN_SUBNET_V4=10.0.0.0/24
+      - VPN_SUBNET_V6=fd00:vpn::/64
+      # Timezone
+      - TZ=${TZ:-UTC}
+
+    volumes:
+      # Persistent configuration and keys
+      - ./config:/etc/wireguard
+      # TUN device access
+      - /dev/net/tun:/dev/net/tun
+
+    # If not using host network, uncomment this:
+    # ports:
+    #   - "51820:51820/udp"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "pgrep", "vpn_server"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Optional: Use bridge network instead of host network
+# networks:
+#   vpn-network:
+#     driver: bridge
+#     ipam:
+#       config:
+#         - subnet: 172.20.0.0/24
