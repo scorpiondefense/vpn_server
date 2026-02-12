@@ -1,0 +1,88 @@
+version: '3.8'
+
+# 4-node mesh VPN example: 1 beacon + 3 mesh nodes
+# Usage:
+#   1. Run: ./generate-configs.sh
+#   2. Run: docker-compose up --build
+
+services:
+  beacon:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: vpn_beacon /etc/wireguard/beacon.conf
+    volumes:
+      - ./configs/beacon.conf:/etc/wireguard/beacon.conf:ro
+    networks:
+      mesh-net:
+        ipv4_address: 172.20.0.10
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "51821:51821/udp"
+    healthcheck:
+      test: ["CMD", "pgrep", "vpn_beacon"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  node-a:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: vpn_server /etc/wireguard/mesh.conf
+    volumes:
+      - ./configs/node-a.conf:/etc/wireguard/mesh.conf:ro
+    networks:
+      mesh-net:
+        ipv4_address: 172.20.0.11
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      beacon:
+        condition: service_healthy
+
+  node-b:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: vpn_server /etc/wireguard/mesh.conf
+    volumes:
+      - ./configs/node-b.conf:/etc/wireguard/mesh.conf:ro
+    networks:
+      mesh-net:
+        ipv4_address: 172.20.0.12
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      beacon:
+        condition: service_healthy
+
+  node-c:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: vpn_server /etc/wireguard/mesh.conf
+    volumes:
+      - ./configs/node-c.conf:/etc/wireguard/mesh.conf:ro
+    networks:
+      mesh-net:
+        ipv4_address: 172.20.0.13
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      beacon:
+        condition: service_healthy
+
+networks:
+  mesh-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24

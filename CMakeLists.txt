@@ -58,6 +58,14 @@ add_library(vpn_lib STATIC
     src/core/thread_pool.cpp
     src/core/config.cpp
 
+    # Mesh
+    src/mesh/mesh_message.cpp
+    src/mesh/kademlia.cpp
+    src/mesh/beacon.cpp
+    src/mesh/mesh_node.cpp
+    src/mesh/mesh_config.cpp
+    src/mesh/nat_traversal.cpp
+
     # Util
     src/util/base64.cpp
     src/util/logger.cpp
@@ -84,10 +92,15 @@ elseif(UNIX)
     target_link_libraries(vpn_lib PUBLIC pthread)
 endif()
 
-# Main executable
+# Main executable (vpn_server / vpn_mesh)
 add_executable(vpn_server src/main.cpp)
 target_link_libraries(vpn_server PRIVATE vpn_lib)
 target_compile_options(vpn_server PRIVATE ${VPN_COMPILE_OPTIONS})
+
+# Beacon executable
+add_executable(vpn_beacon src/beacon_main.cpp)
+target_link_libraries(vpn_beacon PRIVATE vpn_lib)
+target_compile_options(vpn_beacon PRIVATE ${VPN_COMPILE_OPTIONS})
 
 # Key generation tool
 add_executable(wg-keygen tools/wg-keygen.cpp)
@@ -106,6 +119,11 @@ add_executable(vpn_tests
     tests/protocol/test_message.cpp
     tests/protocol/test_handshake.cpp
     tests/net/test_udp_socket.cpp
+    # Mesh tests
+    tests/mesh/test_mesh_message.cpp
+    tests/mesh/test_kademlia.cpp
+    tests/mesh/test_nat_traversal.cpp
+    tests/mesh/test_mesh_config.cpp
 )
 
 target_link_libraries(vpn_tests PRIVATE
@@ -119,7 +137,7 @@ include(Catch)
 catch_discover_tests(vpn_tests)
 
 # Installation
-install(TARGETS vpn_server wg-keygen
+install(TARGETS vpn_server vpn_beacon wg-keygen
     RUNTIME DESTINATION bin
 )
 

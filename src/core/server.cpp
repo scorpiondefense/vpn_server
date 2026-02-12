@@ -1,4 +1,6 @@
 #include "vpn/core/server.hpp"
+#include "vpn/mesh/mesh_node.hpp"
+#include "vpn/mesh/mesh_message.hpp"
 #include "vpn/util/logger.hpp"
 #include <cstring>
 
@@ -180,6 +182,11 @@ void Server::tun_receive_loop() {
 void Server::timer_loop() {
     while (running_.load(std::memory_order_relaxed)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+        // Mesh timer tick
+        if (mesh_node_) {
+            mesh_node_->mesh_timer_tick();
+        }
 
         std::shared_lock lock(peers_mutex_);
         for (auto& peer : peers_) {
@@ -435,6 +442,12 @@ void Server::handle_transport_data(
         return;
     }
 
+    // Check if this is a mesh control message
+    if (mesh_node_ && mesh::is_mesh_message(*plaintext)) {
+        mesh_node_->handle_mesh_message(*plaintext, peer->public_key());
+        return;
+    }
+
     // Write to TUN
     tun_device_.write(*plaintext);
 }
@@ -554,6 +567,13 @@ void Server::register_session_index(uint32_t index, std::shared_ptr<protocol::Pe
 void Server::unregister_session_index(uint32_t index) {
     std::unique_lock lock(peers_mutex_);
     session_index_map_.erase(index);
+}
+
+bool Server::send_mesh_data(const crypto::PublicKey& peer_key, const std::vector<uint8_t>& data) {
+    auto peer = find_peer_by_public_key(peer_key);
+    if (!peer) return false;
+
+    return send_transport_data(*peer, data);
 }
 
 } // namespace vpn::core

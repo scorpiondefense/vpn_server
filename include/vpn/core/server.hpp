@@ -13,6 +13,10 @@
 #include <unordered_map>
 #include <shared_mutex>
 
+namespace vpn::mesh {
+class MeshNode;
+}
+
 namespace vpn::core {
 
 // The main WireGuard server
@@ -39,6 +43,12 @@ public:
 
     // Remove a peer
     void remove_peer(const crypto::PublicKey& public_key);
+
+    // Set mesh node overlay
+    void set_mesh_node(mesh::MeshNode* node) { mesh_node_ = node; }
+
+    // Send mesh data to a specific peer (used by MeshNode)
+    bool send_mesh_data(const crypto::PublicKey& peer_key, const std::vector<uint8_t>& data);
 
     // Get server public key
     const crypto::PublicKey& public_key() const { return keypair_.public_key(); }
@@ -123,6 +133,9 @@ private:
 
     // State
     std::atomic<bool> running_{false};
+
+    // Mesh node overlay (optional)
+    mesh::MeshNode* mesh_node_ = nullptr;
 
     // Statistics
     mutable std::mutex stats_mutex_;
