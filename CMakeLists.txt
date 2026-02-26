@@ -137,10 +137,17 @@ include(Catch)
 catch_discover_tests(vpn_tests)
 
 # Installation
+include(GNUInstallDirs)
+
+install(TARGETS vpn_lib
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
 install(TARGETS vpn_server vpn_beacon wg-keygen
-    RUNTIME DESTINATION bin
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 install(DIRECTORY include/vpn
-    DESTINATION include
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
