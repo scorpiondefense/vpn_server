@@ -5,6 +5,8 @@
 #include <sodium.h>
 #include <cstring>
 #include <chrono>
+#include <sstream>
+#include <iomanip>
 
 namespace vpn::crypto {
 
@@ -24,6 +26,13 @@ uint32_t generate_index() {
     uint32_t index;
     randombytes_buf(&index, sizeof(index));
     return index;
+}
+
+std::string hex(const uint8_t* data, size_t len) {
+    std::ostringstream oss;
+    for (size_t i = 0; i < len; ++i)
+        oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(data[i]);
+    return oss.str();
 }
 
 } // anonymous namespace
@@ -101,10 +110,14 @@ NoiseHandshake NoiseHandshake::create_responder(
     // Initialize protocol state
     hs.hash_ = construction_hash();
     std::memcpy(hs.chaining_key_.data(), hs.hash_.data(), KEY_SIZE);
+    LOG_DEBUG("responder: C = {}", hex(hs.chaining_key_.data(), KEY_SIZE));
     hs.hash_ = vpn::crypto::mix_hash(hs.hash_, {reinterpret_cast<const uint8_t*>(WG_IDENTIFIER.data()),
                                    WG_IDENTIFIER.size()});
+    LOG_DEBUG("responder: H after IDENTIFIER = {}", hex(hs.hash_.data(), HASH_SIZE));
     // For responder, h = HASH(h || local_static)
     hs.hash_ = vpn::crypto::mix_hash(hs.hash_, {local_static.public_key().data(), KEY_SIZE});
+    LOG_DEBUG("responder: H after S_pub = {}", hex(hs.hash_.data(), HASH_SIZE));
+    LOG_DEBUG("responder: S_pub = {}", hex(local_static.public_key().data(), KEY_SIZE));
 
     return hs;
 }
@@ -228,12 +241,18 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     PublicKey remote_ephemeral;
     std::memcpy(remote_ephemeral.data(), &initiation[8], KEY_SIZE);
     remote_ephemeral_ = remote_ephemeral;
+    LOG_DEBUG("process_initiation: E_pub_i = {}", hex(remote_ephemeral.data(), KEY_SIZE));
     mix_hash({remote_ephemeral.data(), KEY_SIZE});
+    LOG_DEBUG("process_initiation: H after E_pub = {}", hex(hash_.data(), HASH_SIZE));
 
     // ck, k = KDF(ck, DH(s, re))
     auto dh_result = x25519(local_static_.private_key(), remote_ephemeral);
+    LOG_DEBUG("process_initiation: DH(S_priv, E_pub) = {}", hex(dh_result.data(), KEY_SIZE));
     mix_key({dh_result.data(), KEY_SIZE});
+    LOG_DEBUG("process_initiation: C after mix_key = {}", hex(chaining_key_.data(), KEY_SIZE));
+    LOG_DEBUG("process_initiation: k = {}", encryption_key_ ? hex(encryption_key_->data(), KEY_SIZE) : "NONE");
 
+    LOG_DEBUG("process_initiation: H (AD for decrypt) = {}", hex(hash_.data(), HASH_SIZE));
     LOG_DEBUG("process_initiation: decrypting static key...");
 
     // Decrypt static key
