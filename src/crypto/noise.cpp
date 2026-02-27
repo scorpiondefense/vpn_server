@@ -312,8 +312,8 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     auto keys = hkdf<2>({chaining_key_.data(), KEY_SIZE}, {});
 
     session_keys_ = SessionKeys{
-        std::move(keys[0]),  // send_key (responder sends first)
-        std::move(keys[1]),  // receive_key
+        std::move(keys[1]),  // send_key: responder sends with T(2)
+        std::move(keys[0]),  // receive_key: responder receives T(1)
         local_index_,
         remote_index_
     };

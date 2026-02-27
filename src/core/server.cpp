@@ -317,14 +317,29 @@ void Server::handle_handshake_initiation(
     // Update peer endpoint
     peer->set_endpoint(from);
 
-    // Complete handshake
+    // Send response first — don't commit session state until we know
+    // the response was sent, to avoid locking out the peer on retry
+    auto response_data = result->message;
+    if (!udp_socket_.send_to(response_data, from)) {
+        LOG_DEBUG("Failed to send handshake response");
+        return;
+    }
+
+    {
+        std::lock_guard lock(stats_mutex_);
+        stats_.tx_bytes += response_data.size();
+        stats_.tx_packets++;
+        stats_.handshakes++;
+    }
+
+    // Finalize handshake and extract session keys
     auto session_keys = hs.finalize();
     if (!session_keys) {
         LOG_DEBUG("Failed to finalize handshake");
         return;
     }
 
-    // Create session
+    // Create session and commit state
     auto session = std::make_shared<protocol::Session>(
         session_keys->send_key,
         session_keys->receive_key,
@@ -332,21 +347,9 @@ void Server::handle_handshake_initiation(
         session_keys->receiver_index
     );
 
-    // Register session index
     register_session_index(session_keys->sender_index, peer);
-
-    // Rotate session
     peer->rotate_session(session);
     peer->timers().handshake_complete();
-
-    // Send response
-    auto response_data = result->message;
-    if (udp_socket_.send_to(response_data, from)) {
-        std::lock_guard lock(stats_mutex_);
-        stats_.tx_bytes += response_data.size();
-        stats_.tx_packets++;
-        stats_.handshakes++;
-    }
 
     LOG_INFO("Handshake completed with peer from {}", from.to_string());
 }
