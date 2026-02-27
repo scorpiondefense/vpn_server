@@ -110,14 +110,10 @@ NoiseHandshake NoiseHandshake::create_responder(
     // Initialize protocol state
     hs.hash_ = construction_hash();
     std::memcpy(hs.chaining_key_.data(), hs.hash_.data(), KEY_SIZE);
-    LOG_DEBUG("responder: C = {}", hex(hs.chaining_key_.data(), KEY_SIZE));
     hs.hash_ = vpn::crypto::mix_hash(hs.hash_, {reinterpret_cast<const uint8_t*>(WG_IDENTIFIER.data()),
                                    WG_IDENTIFIER.size()});
-    LOG_DEBUG("responder: H after IDENTIFIER = {}", hex(hs.hash_.data(), HASH_SIZE));
     // For responder, h = HASH(h || local_static)
     hs.hash_ = vpn::crypto::mix_hash(hs.hash_, {local_static.public_key().data(), KEY_SIZE});
-    LOG_DEBUG("responder: H after S_pub = {}", hex(hs.hash_.data(), HASH_SIZE));
-    LOG_DEBUG("responder: S_pub = {}", hex(local_static.public_key().data(), KEY_SIZE));
 
     return hs;
 }
@@ -185,6 +181,7 @@ std::optional<NoiseHandshake::InitiationResult> NoiseHandshake::create_initiatio
     // e = ephemeral public key
     std::memcpy(&message[8], local_ephemeral_->public_key().data(), KEY_SIZE);
     mix_hash({local_ephemeral_->public_key().data(), KEY_SIZE});
+    mix_key({local_ephemeral_->public_key().data(), KEY_SIZE});  // IKpsk2: MixKey(e_pub)
 
     // ck, k = KDF(ck, DH(e, rs))
     auto dh_result = x25519(local_ephemeral_->private_key(), *remote_static_);
@@ -241,24 +238,17 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     PublicKey remote_ephemeral;
     std::memcpy(remote_ephemeral.data(), &initiation[8], KEY_SIZE);
     remote_ephemeral_ = remote_ephemeral;
-    LOG_DEBUG("process_initiation: E_pub_i = {}", hex(remote_ephemeral.data(), KEY_SIZE));
     mix_hash({remote_ephemeral.data(), KEY_SIZE});
-    LOG_DEBUG("process_initiation: H after E_pub = {}", hex(hash_.data(), HASH_SIZE));
+    mix_key({remote_ephemeral.data(), KEY_SIZE});  // IKpsk2: MixKey(e_pub)
 
     // ck, k = KDF(ck, DH(s, re))
     auto dh_result = x25519(local_static_.private_key(), remote_ephemeral);
-    LOG_DEBUG("process_initiation: DH(S_priv, E_pub) = {}", hex(dh_result.data(), KEY_SIZE));
     mix_key({dh_result.data(), KEY_SIZE});
-    LOG_DEBUG("process_initiation: C after mix_key = {}", hex(chaining_key_.data(), KEY_SIZE));
-    LOG_DEBUG("process_initiation: k = {}", encryption_key_ ? hex(encryption_key_->data(), KEY_SIZE) : "NONE");
-
-    LOG_DEBUG("process_initiation: H (AD for decrypt) = {}", hex(hash_.data(), HASH_SIZE));
-    LOG_DEBUG("process_initiation: decrypting static key...");
 
     // Decrypt static key
     auto decrypted_static = decrypt_and_hash({&initiation[40], 48});
     if (!decrypted_static || decrypted_static->size() != KEY_SIZE) {
-        LOG_DEBUG("process_initiation: FAILED to decrypt static key");
+        LOG_WARN("process_initiation: failed to decrypt static key");
         state_ = State::Failed;
         return std::nullopt;
     }
@@ -266,7 +256,6 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     PublicKey initiator_static;
     std::memcpy(initiator_static.data(), decrypted_static->data(), KEY_SIZE);
     remote_static_ = initiator_static;
-    LOG_DEBUG("process_initiation: decrypted static key OK");
 
     // ck, k = KDF(ck, DH(s, rs))
     auto dh_static = x25519(local_static_.private_key(), initiator_static);
@@ -283,16 +272,13 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     Tai64nTimestamp ts;
     std::memcpy(ts.bytes.data(), decrypted_timestamp->data(), Tai64nTimestamp::SIZE);
     timestamp_ = ts;
-    LOG_DEBUG("process_initiation: decrypted timestamp OK");
-
     // Verify MAC1 (MAC2 verification would require cookie state)
     auto expected_mac1 = compute_mac1(local_static_.public_key(), {initiation.data(), 116});
     if (std::memcmp(&initiation[116], expected_mac1.data(), 16) != 0) {
-        LOG_DEBUG("process_initiation: FAILED MAC1 verification");
+        LOG_WARN("process_initiation: MAC1 verification failed");
         state_ = State::Failed;
         return std::nullopt;
     }
-    LOG_DEBUG("process_initiation: MAC1 verified OK");
 
     // Create response
     // Generate our ephemeral key
@@ -318,6 +304,7 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     // e = our ephemeral
     std::memcpy(&response[12], local_ephemeral_->public_key().data(), KEY_SIZE);
     mix_hash({local_ephemeral_->public_key().data(), KEY_SIZE});
+    mix_key({local_ephemeral_->public_key().data(), KEY_SIZE});  // IKpsk2: MixKey(e_pub)
 
     // ck, k = KDF(ck, DH(e, re))
     auto dh_ee = x25519(local_ephemeral_->private_key(), *remote_ephemeral_);
@@ -327,8 +314,11 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     auto dh_es = x25519(local_ephemeral_->private_key(), *remote_static_);
     mix_key({dh_es.data(), KEY_SIZE});
 
-    // ck, k = KDF(ck, psk)
-    mix_key({psk_.data(), KEY_SIZE});
+    // (ck, τ, k) = KDF3(ck, psk) — PSK step uses KDF3, τ mixed into hash
+    auto psk_keys = hkdf<3>({chaining_key_.data(), KEY_SIZE}, {psk_.data(), KEY_SIZE});
+    std::memcpy(chaining_key_.data(), psk_keys[0].data(), KEY_SIZE);
+    mix_hash({psk_keys[1].data(), KEY_SIZE});  // H = Hash(H || τ)
+    encryption_key_ = std::move(psk_keys[2]);
 
     // encrypted_nothing = AEAD(k, 0, empty, h)
     auto encrypted_nothing = encrypt_and_hash({});
@@ -390,6 +380,7 @@ std::optional<SessionKeys> NoiseHandshake::process_response(std::span<const uint
     std::memcpy(remote_ephemeral.data(), &response[12], KEY_SIZE);
     remote_ephemeral_ = remote_ephemeral;
     mix_hash({remote_ephemeral.data(), KEY_SIZE});
+    mix_key({remote_ephemeral.data(), KEY_SIZE});  // IKpsk2: MixKey(e_pub)
 
     // ck, k = KDF(ck, DH(e, re))
     auto dh_ee = x25519(local_ephemeral_->private_key(), remote_ephemeral);
@@ -399,8 +390,11 @@ std::optional<SessionKeys> NoiseHandshake::process_response(std::span<const uint
     auto dh_se = x25519(local_static_.private_key(), remote_ephemeral);
     mix_key({dh_se.data(), KEY_SIZE});
 
-    // ck, k = KDF(ck, psk)
-    mix_key({psk_.data(), KEY_SIZE});
+    // (ck, τ, k) = KDF3(ck, psk) — PSK step uses KDF3, τ mixed into hash
+    auto psk_keys = hkdf<3>({chaining_key_.data(), KEY_SIZE}, {psk_.data(), KEY_SIZE});
+    std::memcpy(chaining_key_.data(), psk_keys[0].data(), KEY_SIZE);
+    mix_hash({psk_keys[1].data(), KEY_SIZE});  // H = Hash(H || τ)
+    encryption_key_ = std::move(psk_keys[2]);
 
     // Decrypt empty
     auto decrypted = decrypt_and_hash({&response[44], 16});

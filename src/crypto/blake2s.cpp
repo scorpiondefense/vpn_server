@@ -1,11 +1,8 @@
 #include "vpn/crypto/blake2s.hpp"
-#include "vpn/util/logger.hpp"
 #include <sodium.h>
 #include <stdexcept>
 #include <cstring>
 #include <array>
-#include <sstream>
-#include <iomanip>
 
 namespace vpn::crypto {
 
@@ -462,20 +459,9 @@ void Blake2sContext::reset(std::span<const uint8_t> key) {
     blake2s_init(*state, HASH_SIZE, key.data(), key.size());
 }
 
-namespace {
-std::string hex_string(const uint8_t* data, size_t len) {
-    std::ostringstream oss;
-    for (size_t i = 0; i < len; ++i)
-        oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(data[i]);
-    return oss.str();
-}
-} // anonymous namespace
-
 Hash construction_hash() {
-    auto result = blake2s({reinterpret_cast<const uint8_t*>(NOISE_CONSTRUCTION.data()),
+    return blake2s({reinterpret_cast<const uint8_t*>(NOISE_CONSTRUCTION.data()),
                     NOISE_CONSTRUCTION.size()});
-    LOG_DEBUG("construction_hash = {}", hex_string(result.data(), HASH_SIZE));
-    return result;
 }
 
 Hash identifier_hash() {
