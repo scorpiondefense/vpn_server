@@ -21,6 +21,13 @@ Hash blake2s_keyed(
     std::span<const uint8_t> data
 );
 
+// Keyed hash with 16-byte output (for WireGuard MAC1/MAC2)
+// BLAKE2s(data, key, 16) — NOT the same as blake2s_keyed truncated to 16!
+std::array<uint8_t, 16> blake2s_mac(
+    std::span<const uint8_t> key,
+    std::span<const uint8_t> data
+);
+
 // HMAC-BLAKE2s for HKDF
 Hash hmac_blake2s(
     std::span<const uint8_t> key,

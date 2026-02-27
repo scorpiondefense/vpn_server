@@ -1,6 +1,7 @@
 #include "vpn/crypto/noise.hpp"
 #include "vpn/crypto/blake2s.hpp"
 #include "vpn/crypto/chacha20poly1305.hpp"
+#include "vpn/util/logger.hpp"
 #include <sodium.h>
 #include <cstring>
 #include <chrono>
@@ -204,20 +205,24 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     std::span<const uint8_t> initiation
 ) {
     if (role_ != Role::Responder || state_ != State::WaitingForInitiation) {
+        LOG_DEBUG("process_initiation: wrong role or state");
         return std::nullopt;
     }
 
     if (initiation.size() != 148) {
+        LOG_DEBUG("process_initiation: wrong size {}", initiation.size());
         return std::nullopt;
     }
 
     // Verify type
     if (initiation[0] != 0x01) {
+        LOG_DEBUG("process_initiation: wrong type {}", initiation[0]);
         return std::nullopt;
     }
 
     // Extract sender index
     std::memcpy(&remote_index_, &initiation[4], 4);
+    LOG_DEBUG("process_initiation: sender_index={}", remote_index_);
 
     // Extract ephemeral public key
     PublicKey remote_ephemeral;
@@ -229,9 +234,12 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     auto dh_result = x25519(local_static_.private_key(), remote_ephemeral);
     mix_key({dh_result.data(), KEY_SIZE});
 
+    LOG_DEBUG("process_initiation: decrypting static key...");
+
     // Decrypt static key
     auto decrypted_static = decrypt_and_hash({&initiation[40], 48});
     if (!decrypted_static || decrypted_static->size() != KEY_SIZE) {
+        LOG_DEBUG("process_initiation: FAILED to decrypt static key");
         state_ = State::Failed;
         return std::nullopt;
     }
@@ -239,6 +247,7 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     PublicKey initiator_static;
     std::memcpy(initiator_static.data(), decrypted_static->data(), KEY_SIZE);
     remote_static_ = initiator_static;
+    LOG_DEBUG("process_initiation: decrypted static key OK");
 
     // ck, k = KDF(ck, DH(s, rs))
     auto dh_static = x25519(local_static_.private_key(), initiator_static);
@@ -247,6 +256,7 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     // Decrypt timestamp
     auto decrypted_timestamp = decrypt_and_hash({&initiation[88], 28});
     if (!decrypted_timestamp || decrypted_timestamp->size() != Tai64nTimestamp::SIZE) {
+        LOG_DEBUG("process_initiation: FAILED to decrypt timestamp");
         state_ = State::Failed;
         return std::nullopt;
     }
@@ -254,13 +264,16 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     Tai64nTimestamp ts;
     std::memcpy(ts.bytes.data(), decrypted_timestamp->data(), Tai64nTimestamp::SIZE);
     timestamp_ = ts;
+    LOG_DEBUG("process_initiation: decrypted timestamp OK");
 
     // Verify MAC1 (MAC2 verification would require cookie state)
     auto expected_mac1 = compute_mac1(local_static_.public_key(), {initiation.data(), 116});
     if (std::memcmp(&initiation[116], expected_mac1.data(), 16) != 0) {
+        LOG_DEBUG("process_initiation: FAILED MAC1 verification");
         state_ = State::Failed;
         return std::nullopt;
     }
+    LOG_DEBUG("process_initiation: MAC1 verified OK");
 
     // Create response
     // Generate our ephemeral key
@@ -384,12 +397,15 @@ std::optional<SessionKeys> NoiseHandshake::process_response(std::span<const uint
         return std::nullopt;
     }
 
-    // Derive session keys (note: reversed for initiator)
+    // Derive session keys
+    // KDF2(Ci, ε) → (T_send, T_recv) for initiator
+    // keys[0] = T1 = initiator's send key
+    // keys[1] = T2 = initiator's receive key
     auto keys = hkdf<2>({chaining_key_.data(), KEY_SIZE}, {});
 
     session_keys_ = SessionKeys{
-        std::move(keys[1]),  // send_key (initiator's send = responder's receive)
-        std::move(keys[0]),  // receive_key
+        std::move(keys[0]),  // send_key: initiator sends with T(1)
+        std::move(keys[1]),  // receive_key: initiator receives T(2)
         local_index_,
         remote_index_
     };
@@ -473,23 +489,16 @@ std::array<uint8_t, 16> compute_mac1(
     std::memcpy(key_input.data() + WG_LABEL_MAC1.size(), receiver_public_key.data(), KEY_SIZE);
     auto key = blake2s(key_input);
 
-    // mac1 = MAC(key, message)[:16]
-    auto mac = blake2s_keyed({key.data(), KEY_SIZE}, message_without_macs);
-
-    std::array<uint8_t, 16> result;
-    std::memcpy(result.data(), mac.data(), 16);
-    return result;
+    // mac1 = BLAKE2s(message, key, 16) — keyed BLAKE2s with 16-byte digest
+    return blake2s_mac({key.data(), KEY_SIZE}, message_without_macs);
 }
 
 std::array<uint8_t, 16> compute_mac2(
     std::span<const uint8_t, 16> cookie,
     std::span<const uint8_t> message_without_mac2
 ) {
-    auto mac = blake2s_keyed(cookie, message_without_mac2);
-
-    std::array<uint8_t, 16> result;
-    std::memcpy(result.data(), mac.data(), 16);
-    return result;
+    // mac2 = BLAKE2s(message, cookie, 16) — keyed BLAKE2s with 16-byte digest
+    return blake2s_mac(cookie, message_without_mac2);
 }
 
 } // namespace vpn::crypto

@@ -1,8 +1,11 @@
 #include "vpn/crypto/blake2s.hpp"
+#include "vpn/util/logger.hpp"
 #include <sodium.h>
 #include <stdexcept>
 #include <cstring>
 #include <array>
+#include <sstream>
+#include <iomanip>
 
 namespace vpn::crypto {
 
@@ -271,6 +274,21 @@ Hash blake2s_keyed(std::span<const uint8_t> key, std::span<const uint8_t> data) 
     return result;
 }
 
+std::array<uint8_t, 16> blake2s_mac(std::span<const uint8_t> key, std::span<const uint8_t> data) {
+    ensure_sodium_initialized();
+
+    if (key.size() > BLAKE2S_KEYBYTES) {
+        throw std::runtime_error("BLAKE2s key must be at most 32 bytes");
+    }
+
+    // WireGuard Mac(key, input) := BLAKE2s(input, key, 16)
+    // digest_size=16 — the output length is part of the parameter block,
+    // so this is NOT the same as blake2s_keyed(...) truncated to 16 bytes!
+    std::array<uint8_t, 16> result;
+    blake2s_hash(result.data(), 16, data.data(), data.size(), key.data(), key.size());
+    return result;
+}
+
 Hash hmac_blake2s(std::span<const uint8_t> key, std::span<const uint8_t> data) {
     ensure_sodium_initialized();
     return hmac_blake2s_impl(key, data);
@@ -444,9 +462,20 @@ void Blake2sContext::reset(std::span<const uint8_t> key) {
     blake2s_init(*state, HASH_SIZE, key.data(), key.size());
 }
 
+namespace {
+std::string hex_string(const uint8_t* data, size_t len) {
+    std::ostringstream oss;
+    for (size_t i = 0; i < len; ++i)
+        oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(data[i]);
+    return oss.str();
+}
+} // anonymous namespace
+
 Hash construction_hash() {
-    return blake2s({reinterpret_cast<const uint8_t*>(NOISE_CONSTRUCTION.data()),
+    auto result = blake2s({reinterpret_cast<const uint8_t*>(NOISE_CONSTRUCTION.data()),
                     NOISE_CONSTRUCTION.size()});
+    LOG_DEBUG("construction_hash = {}", hex_string(result.data(), HASH_SIZE));
+    return result;
 }
 
 Hash identifier_hash() {
