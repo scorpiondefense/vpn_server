@@ -32,9 +32,9 @@ public:
     // Check if a receive counter is valid (replay protection)
     bool is_valid_receive_counter(uint64_t counter);
 
-    // Encrypt data for sending
+    // Encrypt data for sending with explicit counter (caller provides from next_send_counter())
     // Returns ciphertext including 16-byte tag
-    std::vector<uint8_t> encrypt(std::span<const uint8_t> plaintext);
+    std::vector<uint8_t> encrypt(std::span<const uint8_t> plaintext, uint64_t counter);
 
     // Decrypt received data
     // Returns plaintext or nullopt if decryption fails

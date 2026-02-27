@@ -133,10 +133,11 @@ void Beacon::timer_loop() {
                     if (session && !session->is_expired()) {
                         auto endpoint = peer->endpoint();
                         if (endpoint) {
-                            auto ciphertext = session->encrypt({});
+                            uint64_t counter = session->next_send_counter();
+                            auto ciphertext = session->encrypt({}, counter);
                             protocol::TransportData msg;
                             msg.receiver_index = session->remote_index();
-                            msg.counter = session->next_send_counter();
+                            msg.counter = counter;
                             msg.encrypted_packet = std::move(ciphertext);
                             auto data = msg.serialize();
                             udp_socket_.send_to(data, *endpoint);
@@ -554,11 +555,12 @@ bool Beacon::send_mesh_message(protocol::Peer& peer, const std::vector<uint8_t>&
     auto endpoint = peer.endpoint();
     if (!endpoint) return false;
 
-    auto ciphertext = session->encrypt(mesh_data);
+    uint64_t counter = session->next_send_counter();
+    auto ciphertext = session->encrypt(mesh_data, counter);
 
     protocol::TransportData msg;
     msg.receiver_index = session->remote_index();
-    msg.counter = session->next_send_counter();
+    msg.counter = counter;
     msg.encrypted_packet = std::move(ciphertext);
 
     auto data = msg.serialize();

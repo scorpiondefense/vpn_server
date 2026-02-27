@@ -23,7 +23,8 @@ TEST_CASE("Session encryption and decryption", "[protocol][session]") {
     SECTION("Basic encrypt/decrypt") {
         std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03, 0x04, 0x05};
 
-        auto ciphertext = sender.encrypt(plaintext);
+        uint64_t counter = sender.next_send_counter();
+        auto ciphertext = sender.encrypt(plaintext, counter);
         REQUIRE(ciphertext.size() == plaintext.size() + 16);  // +16 for tag
 
         auto decrypted = receiver.decrypt(ciphertext, 0);  // Counter was 0
@@ -34,17 +35,17 @@ TEST_CASE("Session encryption and decryption", "[protocol][session]") {
     SECTION("Counter increments") {
         REQUIRE(sender.current_send_counter() == 0);
 
-        sender.encrypt({});
+        sender.encrypt({}, sender.next_send_counter());
         REQUIRE(sender.current_send_counter() == 1);
 
-        sender.encrypt({});
+        sender.encrypt({}, sender.next_send_counter());
         REQUIRE(sender.current_send_counter() == 2);
     }
 
     SECTION("Wrong counter fails") {
         std::vector<uint8_t> plaintext = {0x01, 0x02, 0x03};
 
-        auto ciphertext = sender.encrypt(plaintext);
+        auto ciphertext = sender.encrypt(plaintext, sender.next_send_counter());
 
         // Try with wrong counter
         auto decrypted = receiver.decrypt(ciphertext, 99);
@@ -54,8 +55,8 @@ TEST_CASE("Session encryption and decryption", "[protocol][session]") {
     SECTION("Replay protection") {
         std::vector<uint8_t> plaintext = {0x01, 0x02};
 
-        auto ct1 = sender.encrypt(plaintext);
-        auto ct2 = sender.encrypt(plaintext);
+        auto ct1 = sender.encrypt(plaintext, sender.next_send_counter());
+        auto ct2 = sender.encrypt(plaintext, sender.next_send_counter());
 
         // First decrypt succeeds
         auto dec1 = receiver.decrypt(ct1, 0);
@@ -77,7 +78,7 @@ TEST_CASE("Session encryption and decryption", "[protocol][session]") {
         std::vector<std::pair<std::vector<uint8_t>, uint64_t>> messages;
         for (int i = 0; i < 10; ++i) {
             uint64_t counter = sender.next_send_counter();
-            auto ct = sender.encrypt(plaintext);
+            auto ct = sender.encrypt(plaintext, counter);
             sender.next_send_counter();  // Skip one
             messages.push_back({ct, counter});
         }
@@ -116,7 +117,7 @@ TEST_CASE("Session timing", "[protocol][session]") {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         std::vector<uint8_t> test_data = {0x01};
-        session.encrypt(test_data);
+        session.encrypt(test_data, session.next_send_counter());
 
         REQUIRE(session.last_sent_at() > last_sent);
         REQUIRE(session.created_at() == created);

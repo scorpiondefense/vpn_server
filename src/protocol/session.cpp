@@ -86,8 +86,7 @@ bool Session::is_valid_receive_counter(uint64_t counter) {
     return update_replay_window(counter);
 }
 
-std::vector<uint8_t> Session::encrypt(std::span<const uint8_t> plaintext) {
-    uint64_t counter = next_send_counter();
+std::vector<uint8_t> Session::encrypt(std::span<const uint8_t> plaintext, uint64_t counter) {
     update_last_sent();
     return send_cipher_.encrypt(plaintext, {}, counter);
 }

@@ -218,6 +218,8 @@ void Server::timer_loop() {
 void Server::handle_udp_packet(std::span<const uint8_t> data, const net::SocketAddress& from) {
     auto msg_type = protocol::get_message_type(data);
     if (!msg_type) {
+        LOG_DEBUG("Unknown message type from {} ({} bytes, first byte: {})",
+                  from.to_string(), data.size(), data.empty() ? -1 : data[0]);
         return;
     }
 
@@ -249,6 +251,8 @@ void Server::handle_udp_packet(std::span<const uint8_t> data, const net::SocketA
         case protocol::MessageType::TransportData:
             if (auto msg = protocol::TransportData::parse(data)) {
                 handle_transport_data(*msg, from);
+            } else {
+                LOG_DEBUG("Failed to parse transport data ({} bytes)", data.size());
             }
             break;
     }
@@ -258,6 +262,7 @@ void Server::handle_tun_packet(std::span<const uint8_t> data) {
     if (data.size() < 20) {
         return;  // Too small for IP header
     }
+    LOG_DEBUG("TUN packet: {} bytes, version={}", data.size(), (data[0] >> 4) & 0x0F);
 
     // Parse destination IP from packet
     net::IpAddress dest_ip;
@@ -317,8 +322,26 @@ void Server::handle_handshake_initiation(
     // Update peer endpoint
     peer->set_endpoint(from);
 
-    // Send response first — don't commit session state until we know
-    // the response was sent, to avoid locking out the peer on retry
+    // Finalize handshake and extract session keys
+    auto session_keys = hs.finalize();
+    if (!session_keys) {
+        LOG_DEBUG("Failed to finalize handshake");
+        return;
+    }
+
+    // Create and register session BEFORE sending response to avoid race
+    // where client sends transport data before session is registered
+    auto session = std::make_shared<protocol::Session>(
+        session_keys->send_key,
+        session_keys->receive_key,
+        session_keys->sender_index,
+        session_keys->receiver_index
+    );
+
+    register_session_index(session_keys->sender_index, peer);
+    peer->rotate_session(session);
+
+    // Now send the response
     auto response_data = result->message;
     if (!udp_socket_.send_to(response_data, from)) {
         LOG_DEBUG("Failed to send handshake response");
@@ -332,23 +355,6 @@ void Server::handle_handshake_initiation(
         stats_.handshakes++;
     }
 
-    // Finalize handshake and extract session keys
-    auto session_keys = hs.finalize();
-    if (!session_keys) {
-        LOG_DEBUG("Failed to finalize handshake");
-        return;
-    }
-
-    // Create session and commit state
-    auto session = std::make_shared<protocol::Session>(
-        session_keys->send_key,
-        session_keys->receive_key,
-        session_keys->sender_index,
-        session_keys->receiver_index
-    );
-
-    register_session_index(session_keys->sender_index, peer);
-    peer->rotate_session(session);
     peer->timers().handshake_complete();
 
     LOG_INFO("Handshake completed with peer from {}", from.to_string());
@@ -412,6 +418,9 @@ void Server::handle_transport_data(
     const protocol::TransportData& msg,
     const net::SocketAddress& from
 ) {
+    LOG_DEBUG("Transport data: receiver_index={} counter={} payload={} bytes from {}",
+              msg.receiver_index, msg.counter, msg.encrypted_packet.size(), from.to_string());
+
     // Find peer by receiver index
     auto peer = find_peer_by_session_index(msg.receiver_index);
     if (!peer) {
@@ -452,6 +461,8 @@ void Server::handle_transport_data(
     }
 
     // Write to TUN
+    LOG_DEBUG("Writing {} byte packet to TUN (version={})", plaintext->size(),
+              plaintext->empty() ? 0 : ((*plaintext)[0] >> 4));
     tun_device_.write(*plaintext);
 }
 
@@ -493,6 +504,7 @@ bool Server::send_handshake_response(protocol::Peer& peer, uint32_t receiver_ind
 bool Server::send_transport_data(protocol::Peer& peer, std::span<const uint8_t> plaintext) {
     auto session = peer.current_session();
     if (!session || session->is_expired()) {
+        LOG_DEBUG("send_transport_data: no session or expired for peer");
         // Need to initiate handshake
         if (!peer.timers().handshake_in_progress()) {
             send_handshake_initiation(peer);
@@ -502,12 +514,15 @@ bool Server::send_transport_data(protocol::Peer& peer, std::span<const uint8_t> 
 
     auto endpoint = peer.endpoint();
     if (!endpoint) {
+        LOG_DEBUG("send_transport_data: no endpoint for peer");
         return false;
     }
 
     // Build transport message
+    // next_send_counter() returns counter and atomically increments
+    // Pass same counter to encrypt() so header matches encryption nonce
     uint64_t counter = session->next_send_counter();
-    auto ciphertext = session->encrypt(plaintext);
+    auto ciphertext = session->encrypt(plaintext, counter);
 
     protocol::TransportData msg;
     msg.receiver_index = session->remote_index();
@@ -515,6 +530,9 @@ bool Server::send_transport_data(protocol::Peer& peer, std::span<const uint8_t> 
     msg.encrypted_packet = std::move(ciphertext);
 
     auto data = msg.serialize();
+
+    LOG_DEBUG("Sending transport data: receiver_index={} counter={} payload={} bytes to {}",
+              msg.receiver_index, counter, data.size(), endpoint->to_string());
 
     peer.add_tx_bytes(data.size());
     peer.timers().data_sent();
@@ -526,6 +544,7 @@ bool Server::send_transport_data(protocol::Peer& peer, std::span<const uint8_t> 
         return true;
     }
 
+    LOG_DEBUG("send_transport_data: send_to failed");
     return false;
 }
 
