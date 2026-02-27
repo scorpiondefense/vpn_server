@@ -5,8 +5,6 @@
 #include <sodium.h>
 #include <cstring>
 #include <chrono>
-#include <sstream>
-#include <iomanip>
 
 namespace vpn::crypto {
 
@@ -26,13 +24,6 @@ uint32_t generate_index() {
     uint32_t index;
     randombytes_buf(&index, sizeof(index));
     return index;
-}
-
-std::string hex(const uint8_t* data, size_t len) {
-    std::ostringstream oss;
-    for (size_t i = 0; i < len; ++i)
-        oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(data[i]);
-    return oss.str();
 }
 
 } // anonymous namespace
@@ -248,7 +239,7 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     // Decrypt static key
     auto decrypted_static = decrypt_and_hash({&initiation[40], 48});
     if (!decrypted_static || decrypted_static->size() != KEY_SIZE) {
-        LOG_WARN("process_initiation: failed to decrypt static key");
+        LOG_WARNING("process_initiation: failed to decrypt static key");
         state_ = State::Failed;
         return std::nullopt;
     }
@@ -275,7 +266,7 @@ std::optional<NoiseHandshake::ResponseResult> NoiseHandshake::process_initiation
     // Verify MAC1 (MAC2 verification would require cookie state)
     auto expected_mac1 = compute_mac1(local_static_.public_key(), {initiation.data(), 116});
     if (std::memcmp(&initiation[116], expected_mac1.data(), 16) != 0) {
-        LOG_WARN("process_initiation: MAC1 verification failed");
+        LOG_WARNING("process_initiation: MAC1 verification failed");
         state_ = State::Failed;
         return std::nullopt;
     }
