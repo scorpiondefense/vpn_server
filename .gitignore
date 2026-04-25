@@ -78,3 +78,6 @@ coverage/
 
 # Dependencies (fetched by CMake)
 _deps/
+
+# clangd IDE cache
+.cache/
